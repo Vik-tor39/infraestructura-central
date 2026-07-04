@@ -41,6 +41,7 @@ Repositorio de infraestructura compartida para el proyecto de curso de **Desarro
 | **Keycloak** | `quay.io/keycloak/keycloak:24.0.1` | `8080` | SSO / Broker OIDC (realm: `plataforma-integrada`) |
 | **PostgreSQL** | `postgres:15` | `5432` *(interno)* | Base de datos de Keycloak |
 | **Vault** | `hashicorp/vault:1.16` | `8200` | KMS — Motor Transit para cifrado entre sistemas |
+| **Vault Init** | `hashicorp/vault:1.16` | — | Contenedor de un solo uso: habilita Transit y crea las claves al levantar el stack (ver sección 3) |
 
 ---
 
@@ -51,7 +52,7 @@ Repositorio de infraestructura compartida para el proyecto de curso de **Desarro
 | [Docker](https://docs.docker.com/get-docker/) | 24+ | `docker --version` |
 | [Docker Compose](https://docs.docker.com/compose/) | v2+ | `docker compose version` |
 | Git | cualquiera | `git --version` |
-| bash / Git Bash | — | Requerido para ejecutar `init-vault.sh` en Windows |
+| bash / Git Bash | — | Requerido solo para el fallback manual `init-vault.sh` en Windows |
 
 > **Windows**: se recomienda usar **Git Bash** o **WSL2** para ejecutar el script `.sh`.
 
@@ -79,18 +80,27 @@ docker compose up --build
 
 Docker descargará las imágenes necesarias en el primer arranque. El proceso puede tardar unos minutos.
 
-### 3. Inicializar Vault (solo la primera vez o tras cada reinicio)
+### 3. Inicialización de Vault (automática)
 
-Vault corre en **modo dev** — su estado es en memoria y se pierde al reiniciar el contenedor. Tras cada `docker compose up`, espera ~10 s a que Vault esté listo y luego ejecuta:
+Vault corre en **modo dev** — su estado es en memoria y se pierde al reiniciar el contenedor. Para no depender de un paso manual, el `docker-compose.yml` incluye:
+
+- Un **healthcheck** en el servicio `vault` (`vault status`) que marca el contenedor como `healthy` recién cuando la API responde.
+- Un servicio **`vault-init`** (contenedor de un solo uso, `hashicorp/vault:1.16`) que espera a que `vault` esté `healthy` y ejecuta `vault-auto-init.sh`, el cual habilita el **motor Transit** y crea las claves `clickloker-key` y `plataforma-key`. Es idempotente: si ya existen, no falla ni las rota.
+
+Al correr `docker compose up` (o `up -d`), esto pasa solo — no hace falta ningún paso adicional. Puedes confirmarlo con:
 
 ```bash
-bash init-vault.sh
+docker compose ps -a
+# vault      → Up (healthy)
+# vault-init → Exited (0)   ← es el estado esperado, no un error
+
+docker logs vault-init
 ```
 
-Este script:
-1. Espera 8 segundos para asegurar que Vault está disponible.
-2. Habilita el **motor de secretos Transit**.
-3. Crea la clave criptográfica `clickloker-key` usada por los subsistemas.
+> **Fallback manual**: `vault-init` solo se dispara cuando Compose levanta el stack. Si el contenedor `vault` se reinicia por su cuenta (crash, `docker restart vault`, etc.) sin volver a correr `docker compose up`, las claves se pierden igual y no se recrean solas. En ese caso, ejecuta manualmente:
+> ```bash
+> bash init-vault.sh
+> ```
 
 ### 4. Verificar que todo está en pie
 
@@ -195,7 +205,7 @@ docker compose down -v
 
 | Componente | Modo | Implicación |
 |------------|------|-------------|
-| **Vault** | `dev` | Estado en memoria — se pierde al reiniciar. Re-ejecutar `init-vault.sh` siempre. |
+| **Vault** | `dev` | Estado en memoria — se pierde al reiniciar el contenedor. `docker compose up` lo re-inicializa solo vía el servicio `vault-init` (healthcheck + auto-init); si `vault` se reinicia por fuera de Compose, ejecutar `init-vault.sh` a mano. |
 | **Keycloak** | `start-dev` | Sin TLS en este capa — solo para uso local/LAN. |
 | **OpenLDAP** | Federación opcional | Los usuarios también pueden gestionarse directamente en la UI de Keycloak. |
 | **PostgreSQL** | Solo accesible internamente | No expone puerto al host — solo accesible desde `infra-net`. |
@@ -206,9 +216,10 @@ docker compose down -v
 
 ```
 infraestructura/
-├── docker-compose.yml   # Definición de todos los servicios
-├── init-vault.sh        # Script de inicialización del motor Transit de Vault
-└── README.md            # Este archivo
+├── docker-compose.yml     # Definición de todos los servicios (incluye vault-init)
+├── vault-auto-init.sh     # Ejecutado por el servicio "vault-init" en cada `docker compose up`
+├── init-vault.sh          # Fallback manual si Vault se reinicia fuera de Compose
+└── README.md              # Este archivo
 ```
 
 ---

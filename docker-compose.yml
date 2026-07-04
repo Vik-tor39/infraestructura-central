@@ -87,6 +87,34 @@ services:
       - "8200:8200"
     networks:
       - infra-net
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ─────────────────────────────────────────
+  # Vault Init — habilita Transit y crea las llaves
+  # automáticamente cada vez que el stack se levanta,
+  # ya que Vault en modo dev pierde su estado en cada
+  # reinicio del contenedor.
+  # ─────────────────────────────────────────
+  vault-init:
+    image: hashicorp/vault:1.16
+    container_name: vault-init
+    depends_on:
+      vault:
+        condition: service_healthy
+    environment:
+      VAULT_ADDR: "http://vault:8200"
+      VAULT_TOKEN: "vault_root_token"
+    volumes:
+      - ./vault-auto-init.sh:/vault-auto-init.sh:ro
+    entrypoint: ["sh", "/vault-auto-init.sh"]
+    networks:
+      - infra-net
+    restart: "no"
 
 # ─────────────────────────────────────────
 # Volúmenes persistentes

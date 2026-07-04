@@ -1,4 +1,9 @@
 # infraestructura/init-vault.sh
+#
+# NOTA: "docker compose up" ya dispara esto automáticamente vía el servicio
+# "vault-init" (ver docker-compose.yml + vault-auto-init.sh). Usa este script
+# a mano solo si el contenedor "vault" se reinicia por su cuenta (crash,
+# `docker restart vault`, etc.) sin volver a correr "docker compose up".
 
 echo "Esperando que Vault esté listo..."
 sleep 8
